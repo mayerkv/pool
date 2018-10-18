@@ -39,6 +39,14 @@ func (p *Pool) Push(msg interface{}) {
 	p.in <- msg
 }
 
+func (p * Pool) Error(msg interface{}) {
+	p.config.Logger.Error(msg)
+}
+
+func (p * Pool) Info(msg interface{}) {
+	p.config.Logger.Info(msg)
+}
+
 //при перехвате паники говорит что воркер сдох
 func (p *Pool) panicRecover() {
 	if r := recover(); r != nil {

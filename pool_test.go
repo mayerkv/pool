@@ -2,46 +2,58 @@ package pool
 
 import (
 	"fmt"
-	"log"
-	"math/rand"
-	"os"
 	"testing"
 	"time"
 )
 
-func work(b *Bus) {
+type Logger struct {
+}
+
+func (l Logger) Error(i interface{}) {
+	fmt.Println("error:", i)
+}
+
+func (l Logger) Info(i interface{}) {
+	fmt.Println("info", i)
+}
+
+func workFunc(in <-chan interface{}, done <-chan struct{}, l LoggerInterface) {
 	for {
 		select {
-		case <-b.Done:
+		case <-done:
 			return
-		case msg := <-b.In:
-			fmt.Println(msg)
-			b.Logger.Println("log")
-			r := rand.Intn(7)
-			if r%7 == 1 {
-				panic("is dead")
-			}
+		case msg := <-in:
+			l.Info(msg)
 		}
 	}
 }
 
 func TestNew(t *testing.T) {
-	c := Config{
-		Cnt:        5,
-		Logger:     log.New(os.Stdout, "POOL ", log.Ldate|log.Ltime),
-		Duration:   time.Duration(2 * time.Second),
-		Func:       work,
+	p := New(Config{
+		Count:      10,
+		Logger:     Logger{},
+		Duration:   time.Second,
+		Func:       workFunc,
 		BufferSize: 100,
-	}
+	})
 
-	b := New(c)
-	b.Run()
+	p.Run()
 
-	ticker := time.NewTicker(100 * time.Millisecond)
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+
+	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		b.Bus().In <- "MESSAGE"
+	i := 0
+loop:
+	for {
+		select {
+		case <-timer.C:
+			break loop
+		case <-ticker.C:
+			p.Push(i)
+			i++
+		}
 	}
-
 }

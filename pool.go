@@ -2,105 +2,92 @@ package pool
 
 import (
 	"fmt"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
 type Pool struct {
-	in       chan interface{}
-	done     chan struct{}
-	dead     chan error
-	needCnt  int
-	cnt      int32
-	f        WorkerFunc
-	logger   *log.Logger
-	duration time.Duration
-	once     sync.Once
+	in    chan interface{}
+	done  chan struct{}
+	dead  chan error
+	count int32
+
+	once   sync.Once
+	config Config
 }
 
-type WorkerFunc func(b *Bus)
-
-type Bus struct {
-	In     chan interface{}
-	Done   chan struct{}
-	Logger *log.Logger
-	Dead   chan error
-}
-
-type Config struct {
-	Cnt        int
-	Logger     *log.Logger
-	Duration   time.Duration
-	Func       WorkerFunc
-	BufferSize int
-}
-
-func (p *Pool) panicRecover() {
-	if r := recover(); r != nil {
-		p.dead <- fmt.Errorf("worker recover with - %v", r)
-	}
-}
-
-func (p *Pool) add() {
-	go p.work()
-	p.logger.Println("add worker")
-	atomic.AddInt32(&p.cnt, 1)
-}
-
-func (p *Pool) kill() {
-	p.done <- struct{}{}
-	p.logger.Println("kill worker")
-	atomic.AddInt32(&p.cnt, -1)
-}
-
-func (p *Pool) work() {
-	defer p.panicRecover()
-	p.f(p.Bus())
-}
-
-func New(c Config) (b *Pool) {
+//создает экземпляр пула воркеров
+func New(c Config) *Pool {
 	return &Pool{
-		in:       make(chan interface{}, c.BufferSize),
-		done:     make(chan struct{}, c.Cnt),
-		dead:     make(chan error, c.Cnt),
-		needCnt:  c.Cnt,
-		cnt:      0,
-		logger:   c.Logger,
-		duration: c.Duration,
-		f:        c.Func,
+		config: c,
+		in:     make(chan interface{}, c.BufferSize),
+		done:   make(chan struct{}, c.Count),
+		dead:   make(chan error, c.Count),
+		count:  0,
 	}
 }
 
-func (p *Pool) Bus() *Bus {
-	return &Bus{
-		In:     p.in,
-		Done:   p.done,
-		Logger: p.logger,
-		Dead:   p.dead,
-	}
-}
-
+//запуск пула
 func (p *Pool) Run() {
 	p.once.Do(func() {
 		go p.run()
 	})
 }
 
+func (p *Pool) Push(msg interface{}) {
+	p.in <- msg
+}
+
+//при перехвате паники говорит что воркер сдох
+func (p *Pool) panicRecover() {
+	if r := recover(); r != nil {
+		p.dead <- fmt.Errorf("worker recover with - %v", r)
+	}
+}
+
+//добавляет воркера
+func (p *Pool) add() {
+	go p.work()
+	p.config.Logger.Info("add worker")
+	atomic.AddInt32(&p.count, 1)
+}
+
+//говорит воркеру что ему нужно сдохнуть
+func (p *Pool) kill() {
+	p.done <- struct{}{}
+	p.config.Logger.Info("kill worker")
+	atomic.AddInt32(&p.count, -1)
+}
+
+//обертка над функцией воркера для перехвата паники
+func (p *Pool) work() {
+	defer p.panicRecover()
+	p.config.Func(p.in, p.done, p.config.Logger)
+}
+
+//слушает канал для понимания что воркер сдох
+func (p *Pool) watchDead() {
+	for err := range p.dead {
+		p.config.Logger.Error(fmt.Sprintf("worker is dead: %v", err.Error()))
+		atomic.AddInt32(&p.count, -1)
+	}
+}
+
+//регулирует количество воркеров
 func (p *Pool) run() {
-	for i := 0; i < p.needCnt; i++ {
+	for i := 0; i < p.config.Count; i++ {
 		p.add()
 	}
 
 	go p.watchDead()
 
-	ticker := time.NewTicker(p.duration)
+	ticker := time.NewTicker(p.config.Duration)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		cnt := atomic.LoadInt32(&p.cnt)
-		abs := p.needCnt - int(cnt)
+		cnt := atomic.LoadInt32(&p.count)
+		abs := p.config.Count - int(cnt)
 
 		switch {
 		case abs < 0:
@@ -112,12 +99,5 @@ func (p *Pool) run() {
 				p.add()
 			}
 		}
-	}
-}
-
-func (p *Pool) watchDead() {
-	for err := range p.dead {
-		p.logger.Println("worker is dead:", err.Error())
-		atomic.AddInt32(&p.cnt, -1)
 	}
 }

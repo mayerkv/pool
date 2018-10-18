@@ -15,4 +15,5 @@ type WorkerFunc func(in <-chan interface{}, done <-chan struct{}, l LoggerInterf
 type LoggerInterface interface {
 	Info(interface{})
 	Error(interface{})
+	CloseWriter()
 }

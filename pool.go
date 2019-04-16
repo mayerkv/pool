@@ -2,6 +2,7 @@ package pool
 
 import (
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -50,7 +51,7 @@ func (p * Pool) Info(msg interface{}) {
 //при перехвате паники говорит что воркер сдох
 func (p *Pool) panicRecover() {
 	if r := recover(); r != nil {
-		p.dead <- fmt.Errorf("worker recover with - %v", r)
+		p.dead <- fmt.Errorf("worker recover with - %v\nStack - %s", r, debug.Stack())
 	}
 }
 
